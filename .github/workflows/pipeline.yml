@@ -1,0 +1,19 @@
+name: pipeline-diario
+on:
+  schedule:
+    - cron: "0 10 * * *"
+  workflow_dispatch:      
+
+jobs:
+  bigquery:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - name: Rodar pipeline
+        run: |
+          bq query --project_id=portfolio-onibus --use_legacy_sql=false \
+            --max_bytes_billed=30000000000 "$(cat sql/pipeline.sql)"
