@@ -92,7 +92,15 @@ lags AS (
     LAG(viagens, 28) OVER w AS lag_28,
     AVG(viagens)    OVER (PARTITION BY servico ORDER BY data ROWS BETWEEN 34 PRECEDING AND 7 PRECEDING) AS media_28d,
     STDDEV(viagens) OVER (PARTITION BY servico ORDER BY data ROWS BETWEEN 34 PRECEDING AND 7 PRECEDING) AS desvio_28d,
-    MAX(viagens)    OVER (PARTITION BY servico ORDER BY data ROWS BETWEEN 34 PRECEDING AND 7 PRECEDING) AS max_28d
+    MAX(viagens)    OVER (PARTITION BY servico ORDER BY data ROWS BETWEEN 34 PRECEDING AND 7 PRECEDING) AS max_28d,
+      LAST_VALUE(viagens) OVER (
+      PARTITION BY servico, tipo_base
+      ORDER BY UNIX_DATE(data)
+      RANGE BETWEEN UNBOUNDED PRECEDING AND 7 PRECEDING) AS ultimo_mesmo_tipo,
+    AVG(viagens) OVER (
+      PARTITION BY servico, tipo_base
+      ORDER BY UNIX_DATE(data)
+      RANGE BETWEEN 63 PRECEDING AND 7 PRECEDING)       AS media_mesmo_tipo_8sem  
   FROM base
   WINDOW w AS (PARTITION BY servico ORDER BY data)
 )
@@ -100,6 +108,7 @@ SELECT
   *,
   (lag_7 + lag_14 + lag_21 + lag_28) / 4 AS media_4_mesmo_dia,
   max_28d > 0                             AS linha_ativa,
+  (tipo_base = 'Domingo' AND dia_semana != 1) AS eh_feriado,
   COALESCE(REGEXP_CONTAINS(evento, r'ver[aã]o'), FALSE) AS eh_verao,
   CASE
     WHEN evento IS NULL OR REGEXP_CONTAINS(evento, r'^ver[aã]o$')             THEN 'nenhum'
