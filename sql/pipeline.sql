@@ -36,3 +36,80 @@ ASSERT (SELECT MAX(data) FROM `portfolio-onibus.ouro.fato_servico_dia`)
 
 ASSERT (SELECT COUNT(*) FROM `portfolio-onibus.ouro.fato_servico_dia` WHERE modo IS NULL) = 0
   AS 'Existem linhas com modo nulo na ouro';
+
+
+-- BASE M.L
+CREATE OR REPLACE TABLE `portfolio-onibus.ouro.ml_base`
+CLUSTER BY servico AS
+WITH diario AS (
+  SELECT servico, data, SUM(viagens) AS viagens, SUM(km_apurado) AS km
+  FROM `portfolio-onibus.ouro.fato_servico_dia`
+  GROUP BY servico, data
+),
+calendario AS (
+  SELECT data, ANY_VALUE(tipo_dia) AS tipo_dia
+  FROM `portfolio-onibus.ouro.fato_servico_dia`
+  GROUP BY data
+),
+limites AS (
+  SELECT servico, MIN(data) AS ini, MAX(data) AS fim
+  FROM diario
+  GROUP BY servico
+),
+grade AS (
+  SELECT l.servico, d AS data
+  FROM limites l, UNNEST(GENERATE_DATE_ARRAY(l.ini, l.fim)) AS d
+)
+SELECT
+  g.servico, g.data, c.tipo_dia,
+  EXTRACT(DAYOFWEEK FROM g.data) AS dia_semana,
+  EXTRACT(MONTH FROM g.data)     AS mes,
+  EXTRACT(DAY FROM g.data)       AS dia_mes,
+  COALESCE(d.viagens, 0)         AS viagens,
+  COALESCE(d.km, 0)              AS km
+FROM grade g
+LEFT JOIN diario d USING (servico, data)
+LEFT JOIN calendario c USING (data);
+
+
+-- ML FEAT
+CREATE OR REPLACE TABLE `portfolio-onibus.ouro.ml_features`
+CLUSTER BY servico AS
+WITH base AS (
+  SELECT
+    *,
+    REPLACE(TRIM(SPLIT(tipo_dia, ' - ')[OFFSET(0)]), 'Sabado', 'Sábado') AS tipo_base,
+    IF(STRPOS(tipo_dia, ' - ') > 0,
+       LOWER(TRIM(SUBSTR(tipo_dia, STRPOS(tipo_dia, ' - ') + 3))), NULL) AS evento
+  FROM `portfolio-onibus.ouro.ml_base`
+),
+lags AS (
+  SELECT
+    *,
+    LAG(viagens, 7)  OVER w AS lag_7,
+    LAG(viagens, 14) OVER w AS lag_14,
+    LAG(viagens, 21) OVER w AS lag_21,
+    LAG(viagens, 28) OVER w AS lag_28,
+    AVG(viagens)    OVER (PARTITION BY servico ORDER BY data ROWS BETWEEN 34 PRECEDING AND 7 PRECEDING) AS media_28d,
+    STDDEV(viagens) OVER (PARTITION BY servico ORDER BY data ROWS BETWEEN 34 PRECEDING AND 7 PRECEDING) AS desvio_28d,
+    MAX(viagens)    OVER (PARTITION BY servico ORDER BY data ROWS BETWEEN 34 PRECEDING AND 7 PRECEDING) AS max_28d
+  FROM base
+  WINDOW w AS (PARTITION BY servico ORDER BY data)
+)
+SELECT
+  *,
+  (lag_7 + lag_14 + lag_21 + lag_28) / 4 AS media_4_mesmo_dia,
+  max_28d > 0                             AS linha_ativa,
+  COALESCE(REGEXP_CONTAINS(evento, r'ver[aã]o'), FALSE) AS eh_verao,
+  CASE
+    WHEN evento IS NULL OR REGEXP_CONTAINS(evento, r'^ver[aã]o$')             THEN 'nenhum'
+    WHEN REGEXP_CONTAINS(evento, r'r[eé]veillon|natal|fim de ano')            THEN 'festas_fim_de_ano'
+    WHEN REGEXP_CONTAINS(evento, r'rock in rio|madonna|lady gaga|shakira')    THEN 'show'
+    WHEN REGEXP_CONTAINS(evento, r'enem|cnu')                                 THEN 'prova'
+    WHEN REGEXP_CONTAINS(evento, r'copa')                                     THEN 'futebol'
+    WHEN REGEXP_CONTAINS(evento, r'elei')                                     THEN 'eleicao'
+    WHEN REGEXP_CONTAINS(evento, r'parada|marcha')                            THEN 'evento_de_rua'
+    ELSE 'operacao_atipica'
+  END AS categoria_evento
+FROM lags
+WHERE lag_28 IS NOT NULL;
