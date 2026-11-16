@@ -16,4 +16,4 @@ jobs:
       - name: Rodar pipeline
         run: |
           bq query --project_id=portfolio-onibus --use_legacy_sql=false \
-            --maximum_bytes_billed=30000000000 "$(cat sql/pipeline.sql)"
+            --maximum_bytes_billed=30000000000 < sql/pipeline.sql
