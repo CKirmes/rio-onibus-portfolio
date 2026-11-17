@@ -123,7 +123,8 @@ classificado AS (
 operacional AS (
   SELECT *,
     COALESCE(tipo_especial,
-             IF(categoria_evento IN ('nenhum', 'operacao_atipica'), tipo_base, categoria_evento)
+             IF(categoria_evento IN ('eleicao', 'prova', 'festas_fim_de_ano'),
+                categoria_evento, tipo_base)
     ) AS tipo_operacional
   FROM classificado
 ),
