@@ -92,6 +92,33 @@ LEFT JOIN diario d USING (servico, data)
 LEFT JOIN calendario c USING (data)
 WHERE g.data <= DATE_SUB(CURRENT_DATE('America/Sao_Paulo'), INTERVAL 4 DAY);
 
+--FERIADOS
+CREATE OR REPLACE TABLE `portfolio-onibus.ouro.feriados` AS
+SELECT * FROM UNNEST([
+  STRUCT(DATE '2026-11-20' AS data, 'Consciencia Negra' AS nome, 'Domingo' AS tipo_dia_previsto),
+  (DATE '2026-12-24', 'Vespera de Natal',     'Sabado - Véspera de Natal'),
+  (DATE '2026-12-25', 'Natal',                'Domingo'),
+  (DATE '2026-12-31', 'Vespera de Ano Novo',  'Sabado - Reveillon'),
+  (DATE '2027-01-01', 'Confraternizacao',     'Domingo - Reveillon'),
+  (DATE '2027-01-20', 'Sao Sebastiao',        'Domingo'),
+  (DATE '2027-02-08', 'Carnaval',             'Domingo'),
+  (DATE '2027-02-09', 'Carnaval',             'Domingo'),
+  (DATE '2027-02-10', 'Quarta de Cinzas',     'Sabado'),
+  (DATE '2027-03-26', 'Sexta-feira Santa',    'Domingo'),
+  (DATE '2027-04-21', 'Tiradentes',           'Domingo'),
+  (DATE '2027-04-23', 'Sao Jorge',            'Domingo'),
+  (DATE '2027-05-01', 'Dia do Trabalho',      'Domingo'),
+  (DATE '2027-05-27', 'Corpus Christi',       'Domingo'),
+  (DATE '2027-09-07', 'Independencia',        'Domingo'),
+  (DATE '2027-10-12', 'N. Sra. Aparecida',    'Domingo'),
+  (DATE '2027-11-02', 'Finados',              'Domingo'),
+  (DATE '2027-11-15', 'Proclamacao da Republica', 'Domingo'),
+  (DATE '2027-11-20', 'Consciencia Negra',    'Domingo'),
+  (DATE '2027-12-24', 'Vespera de Natal',     'Sabado - Véspera de Natal'),
+  (DATE '2027-12-25', 'Natal',                'Domingo'),
+  (DATE '2027-12-31', 'Vespera de Ano Novo',  'Sabado - Reveillon')
+]);
+
 
 -- ML FEAT
 CREATE OR REPLACE TABLE `portfolio-onibus.ouro.ml_features`
