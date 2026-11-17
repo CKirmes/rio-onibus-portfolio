@@ -61,36 +61,73 @@ SELECT * FROM UNNEST([
 -- BASE M.L
 CREATE OR REPLACE TABLE `portfolio-onibus.ouro.ml_base`
 CLUSTER BY servico AS
-WITH diario AS (
-  SELECT servico, data, SUM(viagens) AS viagens, SUM(km_apurado) AS km
-  FROM `portfolio-onibus.ouro.fato_servico_dia`
-  GROUP BY servico, data
+WITH params AS (
+  SELECT DATE_SUB(CURRENT_DATE('America/Sao_Paulo'), INTERVAL 4 DAY) AS ultimo_completo
+),
+diario AS (
+  SELECT f.servico, f.data, SUM(f.viagens) AS viagens, SUM(f.km_apurado) AS km
+  FROM `portfolio-onibus.ouro.fato_servico_dia` f, params p
+  WHERE f.data <= p.ultimo_completo
+  GROUP BY f.servico, f.data
+),
+calendario_hist AS (
+  SELECT f.data, ANY_VALUE(f.tipo_dia) AS tipo_dia
+  FROM `portfolio-onibus.ouro.fato_servico_dia` f, params p
+  WHERE f.data <= p.ultimo_completo
+  GROUP BY f.data
+),
+verao AS (
+  SELECT LOWER(tipo_dia) LIKE '%ver%o%' AS ativo
+  FROM calendario_hist
+  WHERE EXTRACT(DAYOFWEEK FROM data) IN (1, 7)
+  ORDER BY data DESC
+  LIMIT 1
+),
+calendario_futuro AS (
+  SELECT
+    d AS data,
+    CASE
+      WHEN STRPOS(fe.tipo_dia_previsto, ' - ') > 0 THEN fe.tipo_dia_previsto
+      WHEN fe.tipo_dia_previsto IS NOT NULL       THEN fe.tipo_dia_previsto || IF(v.ativo, ' - Verão', '')
+      WHEN EXTRACT(DAYOFWEEK FROM d) = 1          THEN 'Domingo' || IF(v.ativo, ' - Verão', '')
+      WHEN EXTRACT(DAYOFWEEK FROM d) = 7          THEN 'Sabado'  || IF(v.ativo, ' - Verão', '')
+      ELSE 'Dia Útil'
+    END AS tipo_dia
+  FROM params p
+  CROSS JOIN UNNEST(GENERATE_DATE_ARRAY(DATE_ADD(p.ultimo_completo, INTERVAL 1 DAY),
+                                        DATE_ADD(p.ultimo_completo, INTERVAL 7 DAY))) AS d
+  CROSS JOIN verao v
+  LEFT JOIN `portfolio-onibus.ouro.feriados` fe ON fe.data = d
 ),
 calendario AS (
-  SELECT data, ANY_VALUE(tipo_dia) AS tipo_dia
-  FROM `portfolio-onibus.ouro.fato_servico_dia`
-  GROUP BY data
+  SELECT data, tipo_dia FROM calendario_hist
+  UNION ALL
+  SELECT data, tipo_dia FROM calendario_futuro
 ),
 limites AS (
-  SELECT servico, MIN(data) AS ini, MAX(data) AS fim
-  FROM diario
-  GROUP BY servico
+  SELECT d.servico, MIN(d.data) AS ini,
+    IF(MAX(d.data) >= DATE_SUB(p.ultimo_completo, INTERVAL 27 DAY),
+       DATE_ADD(p.ultimo_completo, INTERVAL 7 DAY),
+       MAX(d.data)) AS fim
+  FROM diario d, params p
+  GROUP BY d.servico, p.ultimo_completo
 ),
 grade AS (
-  SELECT l.servico, d AS data
-  FROM limites l, UNNEST(GENERATE_DATE_ARRAY(l.ini, l.fim)) AS d
+  SELECT l.servico, dt AS data
+  FROM limites l, UNNEST(GENERATE_DATE_ARRAY(l.ini, l.fim)) AS dt
 )
 SELECT
   g.servico, g.data, c.tipo_dia,
   EXTRACT(DAYOFWEEK FROM g.data) AS dia_semana,
   EXTRACT(MONTH FROM g.data)     AS mes,
   EXTRACT(DAY FROM g.data)       AS dia_mes,
-  COALESCE(d.viagens, 0)         AS viagens,
-  COALESCE(d.km, 0)              AS km
+  g.data > p.ultimo_completo     AS eh_futuro,
+  IF(g.data > p.ultimo_completo, NULL, COALESCE(d.viagens, 0)) AS viagens,
+  IF(g.data > p.ultimo_completo, NULL, COALESCE(d.km, 0))      AS km
 FROM grade g
+CROSS JOIN params p
 LEFT JOIN diario d USING (servico, data)
-LEFT JOIN calendario c USING (data)
-WHERE g.data <= DATE_SUB(CURRENT_DATE('America/Sao_Paulo'), INTERVAL 4 DAY);
+LEFT JOIN calendario c USING (data);
 
 --FERIADOS
 CREATE OR REPLACE TABLE `portfolio-onibus.ouro.feriados` AS
@@ -119,6 +156,8 @@ SELECT * FROM UNNEST([
   (DATE '2027-12-31', 'Vespera de Ano Novo',  'Sabado - Reveillon')
 ]);
 
+ASSERT (SELECT COUNT(DISTINCT data) FROM `portfolio-onibus.ouro.ml_base` WHERE eh_futuro) = 7
+  AS 'Nao foram geradas as 7 datas futuras';
 
 -- ML FEAT
 CREATE OR REPLACE TABLE `portfolio-onibus.ouro.ml_features`
