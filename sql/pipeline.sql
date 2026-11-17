@@ -95,7 +95,7 @@ calendario_futuro AS (
     END AS tipo_dia
   FROM params p
   CROSS JOIN UNNEST(GENERATE_DATE_ARRAY(DATE_ADD(p.ultimo_completo, INTERVAL 1 DAY),
-                                        DATE_ADD(p.ultimo_completo, INTERVAL 7 DAY))) AS d
+                                        DATE_ADD(p.ultimo_completo, INTERVAL 14 DAY))) AS d
   CROSS JOIN verao v
   LEFT JOIN `portfolio-onibus.ouro.feriados` fe ON fe.data = d
 ),
@@ -107,7 +107,7 @@ calendario AS (
 limites AS (
   SELECT d.servico, MIN(d.data) AS ini,
     IF(MAX(d.data) >= DATE_SUB(p.ultimo_completo, INTERVAL 27 DAY),
-       DATE_ADD(p.ultimo_completo, INTERVAL 7 DAY),
+       DATE_ADD(p.ultimo_completo, INTERVAL 14 DAY),
        MAX(d.data)) AS fim
   FROM diario d, params p
   GROUP BY d.servico, p.ultimo_completo
@@ -156,8 +156,8 @@ SELECT * FROM UNNEST([
   (DATE '2027-12-31', 'Vespera de Ano Novo',  'Sabado - Reveillon')
 ]);
 
-ASSERT (SELECT COUNT(DISTINCT data) FROM `portfolio-onibus.ouro.ml_base` WHERE eh_futuro) = 7
-  AS 'Nao foram geradas as 7 datas futuras';
+ASSERT (SELECT COUNT(DISTINCT data) FROM `portfolio-onibus.ouro.ml_base` WHERE eh_futuro) = 14
+  AS 'Nao foram geradas as 14 datas futuras';
 
 -- ML FEAT
 CREATE OR REPLACE TABLE `portfolio-onibus.ouro.ml_features`
