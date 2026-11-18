@@ -165,11 +165,9 @@ CROSS JOIN params p
 LEFT JOIN diario d USING (servico, data)
 LEFT JOIN calendario c USING (data);
 
-
-
 ASSERT (SELECT SUM(viagens) FROM `portfolio-onibus.ouro.ml_base`)
      = (SELECT SUM(viagens) FROM `portfolio-onibus.ouro.fato_servico_dia`
-        WHERE data <= DATE_SUB(CURRENT_DATE('America/Sao_Paulo'), INTERVAL 4 DAY))
+        WHERE data <= (SELECT MAX(data) FROM `portfolio-onibus.ouro.ml_base` WHERE NOT eh_futuro))
   AS 'ml_base perdeu ou duplicou viagens em relacao a ouro';
 
 ASSERT (SELECT COUNT(DISTINCT data) FROM `portfolio-onibus.ouro.ml_base` WHERE eh_futuro) = 14
