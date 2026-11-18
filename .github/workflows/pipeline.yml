@@ -17,3 +17,8 @@ jobs:
         run: |
           bq query --project_id=portfolio-onibus --use_legacy_sql=false \
             --maximum_bytes_billed=30000000000 < sql/pipeline.sql
+      - name: Disparar previsao no Databricks
+        run: |
+          curl -sS --fail -X POST "${{ secrets.DATABRICKS_HOST }}/api/2.1/jobs/run-now" \
+            -H "Authorization: Bearer ${{ secrets.DATABRICKS_TOKEN }}" \
+            -d '{"job_id": ${{ secrets.DATABRICKS_JOB_ID }}}'
