@@ -233,3 +233,59 @@ SELECT *,
   COALESCE(tipo_especial = 'anomalia', FALSE)           AS eh_anomalia
 FROM lags
 WHERE lag_35 IS NOT NULL;
+
+-- DIMENSÃO DE DATAS: passado, nowcast e futuro, com status de cada dia
+CREATE OR REPLACE TABLE `portfolio-onibus.ouro.dim_calendario` AS
+WITH corte AS (
+  SELECT MAX(data) AS ultimo_completo
+  FROM `portfolio-onibus.ouro.ml_base` WHERE NOT eh_futuro
+),
+datas AS (
+  SELECT d AS data
+  FROM UNNEST(GENERATE_DATE_ARRAY('2022-06-01',
+              DATE_ADD(CURRENT_DATE('America/Sao_Paulo'), INTERVAL 30 DAY))) AS d
+),
+tipo AS (
+  SELECT data, ANY_VALUE(tipo_dia) AS tipo_dia
+  FROM `portfolio-onibus.ouro.ml_base` GROUP BY data
+)
+SELECT
+  d.data,
+  EXTRACT(YEAR FROM d.data)                AS ano,
+  EXTRACT(MONTH FROM d.data)               AS mes,
+  FORMAT_DATE('%Y-%m', d.data)             AS ano_mes,
+  DATE_TRUNC(d.data, MONTH)                AS inicio_mes,
+  DATE_TRUNC(d.data, WEEK(MONDAY))         AS inicio_semana,
+  EXTRACT(DAYOFWEEK FROM d.data)           AS dia_semana_num,
+  CASE EXTRACT(DAYOFWEEK FROM d.data)
+    WHEN 1 THEN 'Domingo' WHEN 2 THEN 'Segunda' WHEN 3 THEN 'Terça'
+    WHEN 4 THEN 'Quarta'  WHEN 5 THEN 'Quinta'  WHEN 6 THEN 'Sexta'
+    ELSE 'Sábado' END                      AS dia_semana,
+  t.tipo_dia,
+  fe.nome                                  AS feriado,
+  ce.tipo_especial                         AS dia_especial,
+  ce.motivo                                AS motivo_dia_especial,
+  CASE
+    WHEN d.data <= c.ultimo_completo                          THEN 'Realizado'
+    WHEN d.data <  CURRENT_DATE('America/Sao_Paulo')          THEN 'Estimado'
+    WHEN d.data <= DATE_ADD(c.ultimo_completo, INTERVAL 14 DAY) THEN 'Previsto'
+    ELSE 'Sem previsão'
+  END                                      AS status_dado,
+  c.ultimo_completo
+FROM datas d
+CROSS JOIN corte c
+LEFT JOIN tipo t USING (data)
+LEFT JOIN `portfolio-onibus.ouro.feriados` fe USING (data)
+LEFT JOIN `portfolio-onibus.ouro.calendario_especial` ce USING (data);
+
+-- DIMENSÃO DE LINHAS: itinerário e consórcio mais recentes de cada linha
+CREATE OR REPLACE TABLE `portfolio-onibus.ouro.dim_linha` AS
+SELECT
+  servico,
+  ARRAY_AGG(vista     IGNORE NULLS ORDER BY data DESC LIMIT 1)[SAFE_OFFSET(0)] AS vista,
+  ARRAY_AGG(consorcio IGNORE NULLS ORDER BY data DESC LIMIT 1)[SAFE_OFFSET(0)] AS consorcio,
+  MIN(data) AS primeira_operacao,
+  MAX(data) AS ultima_operacao,
+  MAX(data) >= DATE_SUB(CURRENT_DATE('America/Sao_Paulo'), INTERVAL 35 DAY) AS ativa
+FROM `portfolio-onibus.ouro.fato_servico_dia`
+GROUP BY servico;
