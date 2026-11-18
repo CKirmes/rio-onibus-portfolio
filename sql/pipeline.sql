@@ -58,11 +58,47 @@ SELECT * FROM UNNEST([
 ]);
 
 
+--FERIADOS
+CREATE OR REPLACE TABLE `portfolio-onibus.ouro.feriados` AS
+SELECT * FROM UNNEST([
+  STRUCT(DATE '2026-11-20' AS data, 'Consciencia Negra' AS nome, 'Domingo' AS tipo_dia_previsto),
+  (DATE '2026-12-24', 'Vespera de Natal',     'Sabado - Véspera de Natal'),
+  (DATE '2026-12-25', 'Natal',                'Domingo'),
+  (DATE '2026-12-31', 'Vespera de Ano Novo',  'Sabado - Reveillon'),
+  (DATE '2027-01-01', 'Confraternizacao',     'Domingo - Reveillon'),
+  (DATE '2027-01-20', 'Sao Sebastiao',        'Domingo'),
+  (DATE '2027-02-08', 'Carnaval',             'Domingo'),
+  (DATE '2027-02-09', 'Carnaval',             'Domingo'),
+  (DATE '2027-02-10', 'Quarta de Cinzas',     'Sabado'),
+  (DATE '2027-03-26', 'Sexta-feira Santa',    'Domingo'),
+  (DATE '2027-04-21', 'Tiradentes',           'Domingo'),
+  (DATE '2027-04-23', 'Sao Jorge',            'Domingo'),
+  (DATE '2027-05-01', 'Dia do Trabalho',      'Domingo'),
+  (DATE '2027-05-27', 'Corpus Christi',       'Domingo'),
+  (DATE '2027-09-07', 'Independencia',        'Domingo'),
+  (DATE '2027-10-12', 'N. Sra. Aparecida',    'Domingo'),
+  (DATE '2027-11-02', 'Finados',              'Domingo'),
+  (DATE '2027-11-15', 'Proclamacao da Republica', 'Domingo'),
+  (DATE '2027-11-20', 'Consciencia Negra',    'Domingo'),
+  (DATE '2027-12-24', 'Vespera de Natal',     'Sabado - Véspera de Natal'),
+  (DATE '2027-12-25', 'Natal',                'Domingo'),
+  (DATE '2027-12-31', 'Vespera de Ano Novo',  'Sabado - Reveillon')
+]);
+
 -- BASE M.L
 CREATE OR REPLACE TABLE `portfolio-onibus.ouro.ml_base`
 CLUSTER BY servico AS
 WITH params AS (
-  SELECT DATE_SUB(CURRENT_DATE('America/Sao_Paulo'), INTERVAL 4 DAY) AS ultimo_completo
+  SELECT MAX(data) AS ultimo_completo
+  FROM (
+    SELECT data,
+           SUM(viagens) AS viagens,
+           LAG(SUM(viagens), 7) OVER (ORDER BY data) AS viagens_semana_anterior
+    FROM `portfolio-onibus.ouro.fato_servico_dia`
+    WHERE data >= DATE_SUB(CURRENT_DATE('America/Sao_Paulo'), INTERVAL 60 DAY)
+    GROUP BY data
+  )
+  WHERE viagens >= 0.8 * viagens_semana_anterior
 ),
 diario AS (
   SELECT f.servico, f.data, SUM(f.viagens) AS viagens, SUM(f.km_apurado) AS km
@@ -129,32 +165,12 @@ CROSS JOIN params p
 LEFT JOIN diario d USING (servico, data)
 LEFT JOIN calendario c USING (data);
 
---FERIADOS
-CREATE OR REPLACE TABLE `portfolio-onibus.ouro.feriados` AS
-SELECT * FROM UNNEST([
-  STRUCT(DATE '2026-11-20' AS data, 'Consciencia Negra' AS nome, 'Domingo' AS tipo_dia_previsto),
-  (DATE '2026-12-24', 'Vespera de Natal',     'Sabado - Véspera de Natal'),
-  (DATE '2026-12-25', 'Natal',                'Domingo'),
-  (DATE '2026-12-31', 'Vespera de Ano Novo',  'Sabado - Reveillon'),
-  (DATE '2027-01-01', 'Confraternizacao',     'Domingo - Reveillon'),
-  (DATE '2027-01-20', 'Sao Sebastiao',        'Domingo'),
-  (DATE '2027-02-08', 'Carnaval',             'Domingo'),
-  (DATE '2027-02-09', 'Carnaval',             'Domingo'),
-  (DATE '2027-02-10', 'Quarta de Cinzas',     'Sabado'),
-  (DATE '2027-03-26', 'Sexta-feira Santa',    'Domingo'),
-  (DATE '2027-04-21', 'Tiradentes',           'Domingo'),
-  (DATE '2027-04-23', 'Sao Jorge',            'Domingo'),
-  (DATE '2027-05-01', 'Dia do Trabalho',      'Domingo'),
-  (DATE '2027-05-27', 'Corpus Christi',       'Domingo'),
-  (DATE '2027-09-07', 'Independencia',        'Domingo'),
-  (DATE '2027-10-12', 'N. Sra. Aparecida',    'Domingo'),
-  (DATE '2027-11-02', 'Finados',              'Domingo'),
-  (DATE '2027-11-15', 'Proclamacao da Republica', 'Domingo'),
-  (DATE '2027-11-20', 'Consciencia Negra',    'Domingo'),
-  (DATE '2027-12-24', 'Vespera de Natal',     'Sabado - Véspera de Natal'),
-  (DATE '2027-12-25', 'Natal',                'Domingo'),
-  (DATE '2027-12-31', 'Vespera de Ano Novo',  'Sabado - Reveillon')
-]);
+
+
+ASSERT (SELECT SUM(viagens) FROM `portfolio-onibus.ouro.ml_base`)
+     = (SELECT SUM(viagens) FROM `portfolio-onibus.ouro.fato_servico_dia`
+        WHERE data <= DATE_SUB(CURRENT_DATE('America/Sao_Paulo'), INTERVAL 4 DAY))
+  AS 'ml_base perdeu ou duplicou viagens em relacao a ouro';
 
 ASSERT (SELECT COUNT(DISTINCT data) FROM `portfolio-onibus.ouro.ml_base` WHERE eh_futuro) = 14
   AS 'Nao foram geradas as 14 datas futuras';
