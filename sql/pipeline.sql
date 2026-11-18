@@ -262,6 +262,15 @@ SELECT
     WHEN 4 THEN 'Quarta'  WHEN 5 THEN 'Quinta'  WHEN 6 THEN 'Sexta'
     ELSE 'Sábado' END                      AS dia_semana,
   t.tipo_dia,
+  CASE
+    WHEN t.tipo_dia IS NOT NULL
+      THEN REPLACE(TRIM(SPLIT(t.tipo_dia, ' - ')[OFFSET(0)]), 'Sabado', 'Sábado')
+    WHEN fe.tipo_dia_previsto IS NOT NULL
+      THEN REPLACE(TRIM(SPLIT(fe.tipo_dia_previsto, ' - ')[OFFSET(0)]), 'Sabado', 'Sábado')
+    WHEN EXTRACT(DAYOFWEEK FROM d.data) = 1 THEN 'Domingo'
+    WHEN EXTRACT(DAYOFWEEK FROM d.data) = 7 THEN 'Sábado'
+    ELSE 'Dia Útil'
+  END AS tipo_base,
   fe.nome                                  AS feriado,
   ce.tipo_especial                         AS dia_especial,
   ce.motivo                                AS motivo_dia_especial,
@@ -289,3 +298,15 @@ SELECT
   MAX(data) >= DATE_SUB(CURRENT_DATE('America/Sao_Paulo'), INTERVAL 35 DAY) AS ativa
 FROM `portfolio-onibus.ouro.fato_servico_dia`
 GROUP BY servico;
+
+
+-- FROTA DA REDE: veículos distintos em operação por dia
+CREATE OR REPLACE TABLE `portfolio-onibus.ouro.fato_rede_dia` AS
+SELECT
+  data,
+  COUNT(DISTINCT id_veiculo) AS frota_operante,
+  COUNT(DISTINCT servico)    AS linhas_operantes
+FROM `datario.transporte_rodoviario_municipal.viagem_onibus`
+WHERE data >= '2024-01-01'
+  AND tempo_viagem > 0
+GROUP BY data;
