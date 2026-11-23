@@ -90,16 +90,29 @@ SELECT * FROM UNNEST([
 CREATE OR REPLACE TABLE `portfolio-onibus.ouro.ml_base`
 CLUSTER BY servico AS
 WITH params AS (
-  SELECT MAX(data) AS ultimo_completo
+  SELECT COALESCE(
+           DATE_SUB(MIN(IF(incompleto, data, NULL)), INTERVAL 1 DAY),
+           MAX(data)
+         ) AS ultimo_completo
   FROM (
-    SELECT data,
-           SUM(viagens) AS viagens,
-           LAG(SUM(viagens), 7) OVER (ORDER BY data) AS viagens_semana_anterior
-    FROM `portfolio-onibus.ouro.fato_servico_dia`
-    WHERE data >= DATE_SUB(CURRENT_DATE('America/Sao_Paulo'), INTERVAL 60 DAY)
-    GROUP BY data
+    SELECT d.data,
+           d.viagens < 0.6 * (
+             SELECT APPROX_QUANTILES(r.viagens, 2)[OFFSET(1)]
+             FROM (
+               SELECT data, ANY_VALUE(tipo_dia) AS tipo_dia, SUM(viagens) AS viagens
+               FROM `portfolio-onibus.ouro.fato_servico_dia`
+               GROUP BY data
+             ) r
+             WHERE SPLIT(r.tipo_dia, ' - ')[OFFSET(0)] = SPLIT(d.tipo_dia, ' - ')[OFFSET(0)]
+               AND r.data BETWEEN DATE_SUB(d.data, INTERVAL 63 DAY) AND DATE_SUB(d.data, INTERVAL 21 DAY)
+           ) AS incompleto
+    FROM (
+      SELECT data, ANY_VALUE(tipo_dia) AS tipo_dia, SUM(viagens) AS viagens
+      FROM `portfolio-onibus.ouro.fato_servico_dia`
+      WHERE data >= DATE_SUB(CURRENT_DATE('America/Sao_Paulo'), INTERVAL 30 DAY)
+      GROUP BY data
+    ) d
   )
-  WHERE viagens >= 0.8 * viagens_semana_anterior
 ),
 diario AS (
   SELECT f.servico, f.data, SUM(f.viagens) AS viagens, SUM(f.km_apurado) AS km
