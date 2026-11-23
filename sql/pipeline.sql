@@ -89,35 +89,33 @@ SELECT * FROM UNNEST([
 -- BASE M.L
 CREATE OR REPLACE TABLE `portfolio-onibus.ouro.ml_base`
 CLUSTER BY servico AS
-WITH params AS (
-  SELECT COALESCE(
-           DATE_SUB(MIN(IF(incompleto, data, NULL)), INTERVAL 1 DAY),
-           MAX(data)
-         ) AS ultimo_completo
+WITH dias_fonte AS (
+  SELECT
+    d.data,
+    COALESCE(d.viagens < 0.6 * APPROX_QUANTILES(r.viagens, 2)[OFFSET(1)], FALSE) AS incompleto
   FROM (
-    SELECT
-      d.data,
-      d.viagens < 0.6 * APPROX_QUANTILES(r.viagens, 2)[OFFSET(1)] AS incompleto
-    FROM (
-      SELECT data,
-             SPLIT(ANY_VALUE(tipo_dia), ' - ')[OFFSET(0)] AS tipo,
-             SUM(viagens) AS viagens
-      FROM `portfolio-onibus.ouro.fato_servico_dia`
-      WHERE data >= DATE_SUB(CURRENT_DATE('America/Sao_Paulo'), INTERVAL 30 DAY)
-      GROUP BY data
-    ) d
-    LEFT JOIN (
-      SELECT data,
-             SPLIT(ANY_VALUE(tipo_dia), ' - ')[OFFSET(0)] AS tipo,
-             SUM(viagens) AS viagens
-      FROM `portfolio-onibus.ouro.fato_servico_dia`
-      WHERE data >= DATE_SUB(CURRENT_DATE('America/Sao_Paulo'), INTERVAL 100 DAY)
-      GROUP BY data
-    ) r
-      ON r.tipo = d.tipo
-     AND r.data BETWEEN DATE_SUB(d.data, INTERVAL 63 DAY) AND DATE_SUB(d.data, INTERVAL 21 DAY)
-    GROUP BY d.data, d.viagens
-  )
+    SELECT data, SPLIT(ANY_VALUE(tipo_dia), ' - ')[OFFSET(0)] AS tipo, SUM(viagens) AS viagens
+    FROM `portfolio-onibus.ouro.fato_servico_dia`
+    WHERE data >= DATE_SUB(CURRENT_DATE('America/Sao_Paulo'), INTERVAL 30 DAY)
+    GROUP BY data
+  ) d
+  LEFT JOIN (
+    SELECT data, SPLIT(ANY_VALUE(tipo_dia), ' - ')[OFFSET(0)] AS tipo, SUM(viagens) AS viagens
+    FROM `portfolio-onibus.ouro.fato_servico_dia`
+    WHERE data >= DATE_SUB(CURRENT_DATE('America/Sao_Paulo'), INTERVAL 100 DAY)
+    GROUP BY data
+  ) r
+    ON r.tipo = d.tipo
+   AND r.data BETWEEN DATE_SUB(d.data, INTERVAL 63 DAY) AND DATE_SUB(d.data, INTERVAL 21 DAY)
+  GROUP BY d.data, d.viagens
+),
+params AS (
+  SELECT MAX(IF(NOT incompleto, data, NULL)) AS ultimo_completo FROM dias_fonte
+),
+buracos AS (
+  SELECT f.data AS data_buraco
+  FROM dias_fonte f CROSS JOIN params p
+  WHERE f.incompleto AND f.data < p.ultimo_completo
 ),
 diario AS (
   SELECT f.servico, f.data, SUM(f.viagens) AS viagens, SUM(f.km_apurado) AS km
@@ -177,17 +175,22 @@ SELECT
   EXTRACT(MONTH FROM g.data)     AS mes,
   EXTRACT(DAY FROM g.data)       AS dia_mes,
   g.data > p.ultimo_completo     AS eh_futuro,
-  IF(g.data > p.ultimo_completo, NULL, COALESCE(d.viagens, 0)) AS viagens,
-  IF(g.data > p.ultimo_completo, NULL, COALESCE(d.km, 0))      AS km
+  bu.data_buraco IS NOT NULL     AS eh_buraco,
+  IF(g.data > p.ultimo_completo OR bu.data_buraco IS NOT NULL, NULL, COALESCE(d.viagens, 0)) AS viagens,
+  IF(g.data > p.ultimo_completo OR bu.data_buraco IS NOT NULL, NULL, COALESCE(d.km, 0))      AS km
 FROM grade g
 CROSS JOIN params p
+LEFT JOIN buracos bu ON bu.data_buraco = g.data
 LEFT JOIN diario d USING (servico, data)
 LEFT JOIN calendario c USING (data);
 
+
 ASSERT (SELECT SUM(viagens) FROM `portfolio-onibus.ouro.ml_base`)
      = (SELECT SUM(viagens) FROM `portfolio-onibus.ouro.fato_servico_dia`
-        WHERE data <= (SELECT MAX(data) FROM `portfolio-onibus.ouro.ml_base` WHERE NOT eh_futuro))
-  AS 'ml_base perdeu ou duplicou viagens em relacao a ouro';
+        WHERE data <= (SELECT MAX(data) FROM `portfolio-onibus.ouro.ml_base` WHERE NOT eh_futuro)
+          AND data NOT IN (SELECT DISTINCT data FROM `portfolio-onibus.ouro.ml_base` WHERE eh_buraco))
+  AS 'ml_base (corte dinamico) diverge da ouro';
+
 
 ASSERT (SELECT COUNT(DISTINCT data) FROM `portfolio-onibus.ouro.ml_base` WHERE eh_futuro) = 14
   AS 'Nao foram geradas as 14 datas futuras';
@@ -229,6 +232,7 @@ operacional AS (
 ),
 lags AS (
   SELECT *,
+    ROW_NUMBER() OVER w     AS n_dia,
     LAG(viagens, 14) OVER w AS lag_14,
     LAG(viagens, 21) OVER w AS lag_21,
     LAG(viagens, 28) OVER w AS lag_28,
@@ -236,7 +240,7 @@ lags AS (
     AVG(viagens)    OVER (PARTITION BY servico ORDER BY data ROWS BETWEEN 41 PRECEDING AND 14 PRECEDING) AS media_28d,
     STDDEV(viagens) OVER (PARTITION BY servico ORDER BY data ROWS BETWEEN 41 PRECEDING AND 14 PRECEDING) AS desvio_28d,
     MAX(viagens)    OVER (PARTITION BY servico ORDER BY data ROWS BETWEEN 41 PRECEDING AND 14 PRECEDING) AS max_28d,
-    LAST_VALUE(viagens) OVER (PARTITION BY servico, tipo_operacional ORDER BY UNIX_DATE(data)
+    LAST_VALUE(viagens IGNORE NULLS) OVER (PARTITION BY servico, tipo_operacional ORDER BY UNIX_DATE(data)
                               RANGE BETWEEN UNBOUNDED PRECEDING AND 14 PRECEDING) AS ultimo_mesmo_tipo,
     AVG(viagens)        OVER (PARTITION BY servico, tipo_operacional ORDER BY UNIX_DATE(data)
                               RANGE BETWEEN 70 PRECEDING AND 14 PRECEDING)       AS media_mesmo_tipo_8sem
@@ -244,13 +248,16 @@ lags AS (
   WINDOW w AS (PARTITION BY servico ORDER BY data)
 )
 SELECT *,
-  (lag_14 + lag_21 + lag_28 + lag_35) / 4               AS media_4_mesmo_dia,
+  SAFE_DIVIDE(
+    IFNULL(lag_14, 0) + IFNULL(lag_21, 0) + IFNULL(lag_28, 0) + IFNULL(lag_35, 0),
+    IF(lag_14 IS NULL, 0, 1) + IF(lag_21 IS NULL, 0, 1) + IF(lag_28 IS NULL, 0, 1) + IF(lag_35 IS NULL, 0, 1)
+  )                                                     AS media_4_mesmo_dia,
   max_28d > 0                                           AS linha_ativa,
   (tipo_base = 'Domingo' AND dia_semana != 1)           AS eh_feriado,
   COALESCE(REGEXP_CONTAINS(evento, r'ver[aã]o'), FALSE) AS eh_verao,
-  COALESCE(tipo_especial = 'anomalia', FALSE)           AS eh_anomalia
+  COALESCE(tipo_especial = 'anomalia', FALSE) OR eh_buraco AS eh_anomalia
 FROM lags
-WHERE lag_35 IS NOT NULL;
+WHERE n_dia > 35;
 
 -- DIMENSÃO DE DATAS: passado, nowcast e futuro, com status de cada dia
 CREATE OR REPLACE TABLE `portfolio-onibus.ouro.dim_calendario` AS
@@ -266,6 +273,10 @@ datas AS (
 tipo AS (
   SELECT data, ANY_VALUE(tipo_dia) AS tipo_dia
   FROM `portfolio-onibus.ouro.ml_base` GROUP BY data
+),
+buracos AS (
+  SELECT DISTINCT data AS data_buraco
+  FROM `portfolio-onibus.ouro.ml_base` WHERE eh_buraco
 )
 SELECT
   d.data,
@@ -304,7 +315,8 @@ CROSS JOIN corte c
 LEFT JOIN tipo t USING (data)
 LEFT JOIN `portfolio-onibus.ouro.feriados` fe USING (data)
 LEFT JOIN `portfolio-onibus.ouro.calendario_especial` ce USING (data);
-
+LEFT JOIN buracos bu ON bu.data_buraco = d.data
+  
 -- DIMENSÃO DE LINHAS: itinerário e consórcio mais recentes de cada linha
 CREATE OR REPLACE TABLE `portfolio-onibus.ouro.dim_linha` AS
 SELECT
