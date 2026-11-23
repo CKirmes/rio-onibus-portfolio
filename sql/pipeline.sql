@@ -95,23 +95,28 @@ WITH params AS (
            MAX(data)
          ) AS ultimo_completo
   FROM (
-    SELECT d.data,
-           d.viagens < 0.6 * (
-             SELECT APPROX_QUANTILES(r.viagens, 2)[OFFSET(1)]
-             FROM (
-               SELECT data, ANY_VALUE(tipo_dia) AS tipo_dia, SUM(viagens) AS viagens
-               FROM `portfolio-onibus.ouro.fato_servico_dia`
-               GROUP BY data
-             ) r
-             WHERE SPLIT(r.tipo_dia, ' - ')[OFFSET(0)] = SPLIT(d.tipo_dia, ' - ')[OFFSET(0)]
-               AND r.data BETWEEN DATE_SUB(d.data, INTERVAL 63 DAY) AND DATE_SUB(d.data, INTERVAL 21 DAY)
-           ) AS incompleto
+    SELECT
+      d.data,
+      d.viagens < 0.6 * APPROX_QUANTILES(r.viagens, 2)[OFFSET(1)] AS incompleto
     FROM (
-      SELECT data, ANY_VALUE(tipo_dia) AS tipo_dia, SUM(viagens) AS viagens
+      SELECT data,
+             SPLIT(ANY_VALUE(tipo_dia), ' - ')[OFFSET(0)] AS tipo,
+             SUM(viagens) AS viagens
       FROM `portfolio-onibus.ouro.fato_servico_dia`
       WHERE data >= DATE_SUB(CURRENT_DATE('America/Sao_Paulo'), INTERVAL 30 DAY)
       GROUP BY data
     ) d
+    LEFT JOIN (
+      SELECT data,
+             SPLIT(ANY_VALUE(tipo_dia), ' - ')[OFFSET(0)] AS tipo,
+             SUM(viagens) AS viagens
+      FROM `portfolio-onibus.ouro.fato_servico_dia`
+      WHERE data >= DATE_SUB(CURRENT_DATE('America/Sao_Paulo'), INTERVAL 100 DAY)
+      GROUP BY data
+    ) r
+      ON r.tipo = d.tipo
+     AND r.data BETWEEN DATE_SUB(d.data, INTERVAL 63 DAY) AND DATE_SUB(d.data, INTERVAL 21 DAY)
+    GROUP BY d.data, d.viagens
   )
 ),
 diario AS (
