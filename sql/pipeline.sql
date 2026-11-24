@@ -314,8 +314,8 @@ FROM datas d
 CROSS JOIN corte c
 LEFT JOIN tipo t USING (data)
 LEFT JOIN `portfolio-onibus.ouro.feriados` fe USING (data)
-LEFT JOIN `portfolio-onibus.ouro.calendario_especial` ce USING (data);
-LEFT JOIN buracos bu ON bu.data_buraco = d.data
+LEFT JOIN `portfolio-onibus.ouro.calendario_especial` ce USING (data)
+LEFT JOIN buracos bu ON bu.data_buraco = d.data;
   
 -- DIMENSÃO DE LINHAS: itinerário e consórcio mais recentes de cada linha
 CREATE OR REPLACE TABLE `portfolio-onibus.ouro.dim_linha` AS
