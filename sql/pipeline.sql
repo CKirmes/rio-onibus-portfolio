@@ -304,6 +304,7 @@ SELECT
   ce.tipo_especial                         AS dia_especial,
   ce.motivo                                AS motivo_dia_especial,
   CASE
+    WHEN bu.data_buraco IS NOT NULL THEN 'Falha na fonte'
     WHEN d.data <= c.ultimo_completo                          THEN 'Realizado'
     WHEN d.data <  CURRENT_DATE('America/Sao_Paulo')          THEN 'Estimado'
     WHEN d.data <= DATE_ADD(c.ultimo_completo, INTERVAL 14 DAY) THEN 'Previsto'
