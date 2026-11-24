@@ -268,7 +268,7 @@ WITH corte AS (
 datas AS (
   SELECT d AS data
   FROM UNNEST(GENERATE_DATE_ARRAY('2022-06-01',
-              DATE_ADD(CURRENT_DATE('America/Sao_Paulo'), INTERVAL 30 DAY))) AS d
+              DATE_ADD(CURRENT_DATE('America/Sao_Paulo'), INTERVAL 120 DAY))) AS d
 ),
 tipo AS (
   SELECT data, ANY_VALUE(tipo_dia) AS tipo_dia
